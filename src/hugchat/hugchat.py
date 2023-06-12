@@ -270,7 +270,62 @@ class ChatBot:
                     elif "error" in obj:
                         raise ChatError(obj["error"])
             return res_text
+    def message_stream(self, prompt: str, conversation_id=None, temperature=0.6, top_p=0.95, repetition_penalty=1.025, top_k=50, truncate=1024, max_new_tokens=300, return_full_text=False, watermark=False) -> str:
+        if not conversation_id:
+            conversation_id = self.current_conversation
+        if self.current_conversation == "":
+            self.current_conversation = self.new_conversation()
+        headers = self.get_headers(ref=True)
+        req_json = {
+            "inputs": prompt,
+            "parameters": {
+                "temperature": temperature,
+                "top_p": top_p,
+                "repetition_penalty": repetition_penalty,
+                "top_k": top_k,
+                "truncate": truncate,
+                "watermark": watermark,
+                "max_new_tokens": max_new_tokens,
+                "stop": ["</s>"],
+                "return_full_text": return_full_text
+            },
+            "stream": True,
+            "options": {"is_retry": False, "use_cache": False}
+        }
 
+        response = self.session.post(self.hf_base_url + f"/chat/conversation/{self.current_conversation}", json=req_json, stream=True, headers=headers, cookies=self.session.cookies.get_dict())
+        if response.status_code == 200:
+            
+            for line in response.iter_lines():
+  
+                if line:
+                    res = line.decode("utf-8")
+                    if res.startswith("data:"):
+                        res = res[5:]
+                    obj = json.loads(res)
+
+                    if "token" in obj and "text" in obj["token"]:
+                        
+                        if obj["token"]["text"] == "</s>" or obj["token"]["text"] == ".</s>"  and obj["generated_text"] is not None:
+                           continue
+                        else:
+                            yield obj["token"]["text"]
+                    elif "error" in obj:
+                        raise Exception(obj["error"])
+        elif response.status_code == 429:
+            print(f"{response.status_code} error: server is busy")
+            response.raise_for_status()        
+        else:
+            print(f"{response.status_code} error")
+            response.raise_for_status()
+
+def stream_print(text_iter, end="\n"):
+    for text in text_iter:
+        if text is None:
+            continue
+        print(text, end="", flush=True)
+    print(end, end="")
+    
 
 if __name__ == "__main__":
     bot = ChatBot()
@@ -280,4 +335,6 @@ if __name__ == "__main__":
     print(summary)
     sharelink = bot.share_conversation()
     print(sharelink)
+    
+    stream_print(bot.message_stream("Hello"))
 
